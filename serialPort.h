@@ -109,7 +109,7 @@ serial_port_err_t serialPortClose(serial_port_t* port);
  *
  * @ingroup HL_functions
  */
-serial_port_err_t serialPortRead(serial_port_t* port, uint8_t *buf, uint64_t size);
+serial_port_err_t serialPortRead(serial_port_t* port, char *buf, uint64_t size);
 
 /**
  * @brief Writes data to the serial port.

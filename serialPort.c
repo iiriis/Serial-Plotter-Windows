@@ -28,7 +28,7 @@
 #define FILE_RW_MODE            (FILE_GENERIC_READ | FILE_GENERIC_WRITE)
 
 DWORD WINAPI MonitorSerialRX(LPVOID lpParam);
-char input_buf[4096];    
+static char input_buf[4096];    
 
 
 serial_port_err_t setTimeouts(serial_port_t* port, uint64_t readTimeout, uint64_t writeTimeout)
@@ -134,7 +134,7 @@ serial_port_err_t serialPortClose(serial_port_t* port)
 }
 
 
-serial_port_err_t serialPortRead(serial_port_t* port, uint8_t *buf, uint64_t size)
+serial_port_err_t serialPortRead(serial_port_t* port, char *buf, uint64_t size)
 {
     /* to store the actual bytes read */
     uint64_t bytesRead;
