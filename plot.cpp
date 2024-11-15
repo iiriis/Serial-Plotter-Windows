@@ -4,6 +4,16 @@
 #include <iostream>
 #include <vector>
 #include <windows.h>
+#include <algorithm> // For std::min and std::max
+
+using namespace std;
+
+
+void updateAmplitudeRange();
+
+
+
+#define MAX_BUFFER_SIZE 10000
 
 extern HANDLE data_ready;
 
@@ -38,7 +48,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     const size_t minBufferSize = 10;
-    const size_t maxBufferSize = 10000;
+    const size_t maxBufferSize = MAX_BUFFER_SIZE;
 
     if (yoffset > 0 && bufferSize < maxBufferSize) {
         bufferSize += 10;
@@ -65,6 +75,18 @@ void push_data(float x, float y, float z) {
 
     history3[head3] = z;
     head3 = (head3 + 1) % bufferSize;
+
+    // updateAmplitudeRange(); // Update the range of amplitudes for autoscaling
+
+        // Update running min/max
+    minAmplitude = std::min({minAmplitude, x, y, z});
+    maxAmplitude = std::max({maxAmplitude, x, y, z});
+
+    // Ensure a margin to avoid clipping
+    float margin = (maxAmplitude - minAmplitude) * 0.1f;
+    minAmplitude -= margin;
+    maxAmplitude += margin;
+
 }
 
 // Update amplitude range to track min and max values over all three histories
@@ -127,8 +149,6 @@ int startOpenGL() {
         float aspectRatio = (float)width / (float)height;
 
         WaitForSingleObject(data_ready, 1);
-
-        updateAmplitudeRange(); // Update the range of amplitudes for autoscaling
 
         drawData(history1, head1, 0.0f, aspectRatio, 1.0f, 0.0f, 0.0f); // Draw data 1 with red color
         drawData(history2, head2, 0.0f, aspectRatio, 0.0f, 1.0f, 0.0f); // Draw data 2 with green color
