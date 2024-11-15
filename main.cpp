@@ -59,7 +59,7 @@ void serialIRQ(char* buffer, int bytes){
 
     // printf("%*s", bytes, buffer);
 
-    push_data((float)a0, (float)a1, (float)a2);
+    push_data(4, (float)a0, (float)a1, (float)a2, (float)(rand()%255));
 
     printf("%d %d %d\n", a0, a1, a2);
 

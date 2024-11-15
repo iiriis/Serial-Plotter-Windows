@@ -3,15 +3,15 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
+#include <array>
 #include <windows.h>
-#include <algorithm> // For std::min and std::max
+#include <algorithm>
+#include <limits>
+#include <cstdarg>
+#include <atomic>
+#include <mutex>
 
 using namespace std;
-
-
-void updateAmplitudeRange();
-
-
 
 #define MAX_BUFFER_SIZE 10000
 
@@ -19,19 +19,40 @@ extern HANDLE data_ready;
 
 const unsigned int WIDTH = 800;
 const unsigned int HEIGHT = 600;
-
-// Define initial buffer size
 size_t bufferSize = 100;
 
-std::vector<float> history1(bufferSize, 0.0f);
-std::vector<float> history2(bufferSize, 0.0f);
-std::vector<float> history3(bufferSize, 0.0f);
-size_t head1 = 0;
-size_t head2 = 0;
-size_t head3 = 0;
+// Pre-allocated buffers to store data history (Circular Buffers)
+std::vector<std::vector<float>> histories;
+std::vector<size_t> heads;
 
+float currentMinAmplitude = std::numeric_limits<float>::max();
+float currentMaxAmplitude = std::numeric_limits<float>::lowest();
 float minAmplitude = 0.0f;
 float maxAmplitude = 1.0f;
+std::atomic<bool> requiresRescan(false);
+
+const std::vector<std::array<float, 3>> colorSet = {
+    {1.0f, 0.0f, 0.0f},   // Red
+    {0.0f, 1.0f, 0.0f},   // Green
+    {0.0f, 0.0f, 1.0f},   // Blue
+    {1.0f, 1.0f, 0.0f},   // Yellow
+    {0.0f, 1.0f, 1.0f},   // Cyan
+    {1.0f, 0.0f, 1.0f},   // Magenta
+    {0.5f, 0.5f, 0.5f},   // Gray
+    {0.5f, 0.0f, 0.0f},   // Maroon
+    {0.0f, 0.5f, 0.0f},   // Dark Green
+    {0.0f, 0.0f, 0.5f},   // Navy
+    {1.0f, 0.5f, 0.0f},   // Orange
+    {0.5f, 0.0f, 0.5f},   // Purple
+    {0.5f, 0.5f, 0.0f},   // Olive
+    {0.0f, 0.5f, 0.5f},   // Teal
+    {1.0f, 0.75f, 0.8f},  // Pink
+    {0.75f, 1.0f, 0.75f}, // Light Green
+    {0.75f, 0.75f, 1.0f}, // Light Blue
+    {1.0f, 1.0f, 0.75f},  // Light Yellow
+    {0.75f, 1.0f, 1.0f},  // Light Cyan
+    {1.0f, 0.75f, 1.0f}   // Light Magenta
+};
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
@@ -56,57 +77,73 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
         bufferSize -= 10;
     }
 
-    history1.resize(bufferSize, 0.0f);
-    history2.resize(bufferSize, 0.0f);
-    history3.resize(bufferSize, 0.0f);
+    for (auto& history : histories) {
+        history.resize(bufferSize, 0.0f);
+    }
 
-    head1 = head1 % bufferSize;
-    head2 = head2 % bufferSize;
-    head3 = head3 % bufferSize;
+    for (auto& head : heads) {
+        head = head % bufferSize;
+    }
 }
 
-// Function to push data to the history arrays
-void push_data(float x, float y, float z) {
-    history1[head1] = x;
-    head1 = (head1 + 1) % bufferSize;
-
-    history2[head2] = y;
-    head2 = (head2 + 1) % bufferSize;
-
-    history3[head3] = z;
-    head3 = (head3 + 1) % bufferSize;
-
-    // updateAmplitudeRange(); // Update the range of amplitudes for autoscaling
-
-        // Update running min/max
-    minAmplitude = std::min({minAmplitude, x, y, z});
-    maxAmplitude = std::max({maxAmplitude, x, y, z});
-
-    // Ensure a margin to avoid clipping
-    float margin = (maxAmplitude - minAmplitude) * 0.1f;
-    minAmplitude -= margin;
-    maxAmplitude += margin;
-
-}
-
-// Update amplitude range to track min and max values over all three histories
-void updateAmplitudeRange() {
-    minAmplitude = history1[0];
-    maxAmplitude = history1[0];
+// Function to scan all histories for the new min and max
+void rescanAmplitudeRange() {
+    currentMinAmplitude = std::numeric_limits<float>::max();
+    currentMaxAmplitude = std::numeric_limits<float>::lowest();
     
     for (size_t i = 0; i < bufferSize; ++i) {
-        if (history1[i] < minAmplitude) minAmplitude = history1[i];
-        if (history1[i] > maxAmplitude) maxAmplitude = history1[i];
-        if (history2[i] < minAmplitude) minAmplitude = history2[i];
-        if (history2[i] > maxAmplitude) maxAmplitude = history2[i];
-        if (history3[i] < minAmplitude) minAmplitude = history3[i];
-        if (history3[i] > maxAmplitude) maxAmplitude = history3[i];
+        for (size_t j = 0; j < histories.size(); ++j) {
+            currentMinAmplitude = std::min(currentMinAmplitude, histories[j][i]);
+            currentMaxAmplitude = std::max(currentMaxAmplitude, histories[j][i]);
+        }
     }
     
+    float margin = (currentMaxAmplitude - currentMinAmplitude) * 0.1f;
+    minAmplitude = currentMinAmplitude - margin;
+    maxAmplitude = currentMaxAmplitude + margin;
+}
+
+void push_data(size_t num_vars, ...) {
+    va_list args;
+    va_start(args, num_vars);
+
+    // Resize histories and heads if needed
+    if (histories.size() < num_vars) {
+        histories.resize(num_vars, std::vector<float>(bufferSize, 0.0f));
+        heads.resize(num_vars, 0);
+    }
+
+    // Push the new data
+    for (size_t i = 0; i < num_vars; ++i) {
+        float value = static_cast<float>(va_arg(args, double)); // Use double because va_arg promotes float to double
+
+        // Check if the value to be overwritten is the current min or max
+        if (histories[i][heads[i]] == currentMinAmplitude || histories[i][heads[i]] == currentMaxAmplitude) {
+            requiresRescan = true;
+        }
+
+        histories[i][heads[i]] = value;
+        heads[i] = (heads[i] + 1) % bufferSize;
+
+        // Update running min/max
+        if (!requiresRescan) {
+            currentMinAmplitude = std::min(currentMinAmplitude, value);
+            currentMaxAmplitude = std::max(currentMaxAmplitude, value);
+        }
+    }
+
+    va_end(args);
+
     // Ensure a margin to avoid clipping
-    float margin = (maxAmplitude - minAmplitude) * 0.1f;
-    minAmplitude -= margin;
-    maxAmplitude += margin;
+    float margin = (currentMaxAmplitude - currentMinAmplitude) * 0.1f;
+    minAmplitude = currentMinAmplitude - margin;
+    maxAmplitude = currentMaxAmplitude + margin;
+
+    // Rescan if required
+    if (requiresRescan) {
+        rescanAmplitudeRange();
+        requiresRescan = false;
+    }
 }
 
 // Draw the data, normalizing y-coordinates based on min/max amplitude
@@ -124,15 +161,19 @@ void drawData(const std::vector<float> &history, size_t head, float offsetY, flo
     glEnd();
 }
 
-int startOpenGL() {
+void startOpenGL() {
+    // Initialize the data structures for plotting
+    histories.resize(1, std::vector<float>(bufferSize, 0.0f));
+    heads.resize(1, 0);
+
     if (!glfwInit()) {
-        return -1;
+        return;
     }
 
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Scrolling Data with Autoscaling", NULL, NULL);
     if (!window) {
         glfwTerminate();
-        return -1;
+        return;
     }
 
     glfwMakeContextCurrent(window);
@@ -148,11 +189,13 @@ int startOpenGL() {
         glfwGetFramebufferSize(window, &width, &height);
         float aspectRatio = (float)width / (float)height;
 
-        WaitForSingleObject(data_ready, 1);
+        WaitForSingleObject(data_ready, 10);
 
-        drawData(history1, head1, 0.0f, aspectRatio, 1.0f, 0.0f, 0.0f); // Draw data 1 with red color
-        drawData(history2, head2, 0.0f, aspectRatio, 0.0f, 1.0f, 0.0f); // Draw data 2 with green color
-        drawData(history3, head3, 0.0f, aspectRatio, 0.0f, 0.0f, 1.0f); // Draw data 3 with blue color
+        // Draw each history with different colors
+        for (size_t i = 0; i < histories.size(); ++i) {
+            const auto& color = colorSet[i % colorSet.size()];
+            drawData(histories[i], heads[i], 0.0f, aspectRatio, color[0], color[1], color[2]);
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -160,5 +203,4 @@ int startOpenGL() {
 
     glfwDestroyWindow(window);
     glfwTerminate();
-    return 0;
 }
